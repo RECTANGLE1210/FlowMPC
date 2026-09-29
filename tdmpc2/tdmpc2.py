@@ -18,17 +18,8 @@ class TDMPC2(torch.nn.Module):
 		super().__init__()
 		self.cfg = cfg
 		self.device = torch.device('cuda:0')
-		self.model = WorldModel(cfg).to(self.device)
-		self.optim = torch.optim.Adam([
-			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
-			{'params': self.model._dynamics.parameters()},
-			{'params': self.model._reward.parameters()},
-			{'params': self.model._termination.parameters() if self.cfg.episodic else []},
-			{'params': self.model._Qs.parameters()},
-			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []
-			 }
-		], lr=self.cfg.lr, capturable=True)
-		self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr, eps=1e-5, capturable=True)
+		self.model = self._build_model(cfg).to(self.device)
+		self._configure_optimizers()
 		self.model.eval()
 		self.scale = RunningScale(cfg)
 		self.cfg.iterations += 2*int(cfg.action_dim >= 20) # Heuristic for large action spaces
@@ -41,6 +32,21 @@ class TDMPC2(torch.nn.Module):
 		if cfg.compile:
 			print('Compiling update function with torch.compile...')
 			self._update = torch.compile(self._update, mode="reduce-overhead")
+
+	def _build_model(self, cfg):
+		return WorldModel(cfg)
+
+	def _configure_optimizers(self):
+		self.optim = torch.optim.Adam([
+			{'params': self.model._encoder.parameters(), 'lr': self.cfg.lr*self.cfg.enc_lr_scale},
+			{'params': self.model._dynamics.parameters()},
+			{'params': self.model._reward.parameters()},
+			{'params': self.model._termination.parameters() if self.cfg.episodic else []},
+			{'params': self.model._Qs.parameters()},
+			{'params': self.model._task_emb.parameters() if self.cfg.multitask else []
+			 }
+		], lr=self.cfg.lr, capturable=True)
+		self.pi_optim = torch.optim.Adam(self.model._pi.parameters(), lr=self.cfg.lr, eps=1e-5, capturable=True)
 
 	@property
 	def plan(self):
@@ -68,6 +74,10 @@ class TDMPC2(torch.nn.Module):
 		"""
 		frac = episode_length/self.cfg.discount_denom
 		return min(max((frac-1)/(frac), self.cfg.discount_min), self.cfg.discount_max)
+
+	def _bootstrap_action(self, z, task):
+		action, _ = self.model.pi(z, task)
+		return action
 
 	def save(self, fp):
 		"""
@@ -132,8 +142,18 @@ class TDMPC2(torch.nn.Module):
 			discount = discount * discount_update
 			if self.cfg.episodic:
 				termination = torch.clip(termination + (self.model.termination(z, task) > 0.5).float(), max=1.)
-		action, _ = self.model.pi(z, task)
+		action = self._bootstrap_action(z, task)
 		return G + discount * (1-termination) * self.model.Q(z, action, task, return_type='avg')
+
+	def _proposal_trajectories(self, obs, z, task):
+		"""Generate the legacy actor rollout used as MPPI policy proposals."""
+		pi_actions = torch.empty(self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
+		proposal_z = z.repeat(self.cfg.num_pi_trajs, 1)
+		for t in range(self.cfg.horizon-1):
+			pi_actions[t], _ = self.model.pi(proposal_z, task)
+			proposal_z = self.model.next(proposal_z, pi_actions[t], task)
+		pi_actions[-1], _ = self.model.pi(proposal_z, task)
+		return pi_actions
 
 	@torch.no_grad()
 	def _plan(self, obs, t0=False, eval_mode=False, task=None):
@@ -152,13 +172,7 @@ class TDMPC2(torch.nn.Module):
 		# Sample policy trajectories
 		z = self.model.encode(obs, task)
 		if self.cfg.num_pi_trajs > 0:
-			pi_actions = torch.empty(self.cfg.horizon, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
-			_z = z.repeat(self.cfg.num_pi_trajs, 1)
-			for t in range(self.cfg.horizon-1):
-				pi_actions[t], _ = self.model.pi(_z, task)
-				_z = self.model.next(_z, pi_actions[t], task)
-			pi_actions[-1], _ = self.model.pi(_z, task)
-
+			pi_actions = self._proposal_trajectories(obs, z, task)
 		# Initialize state and parameters
 		z = z.repeat(self.cfg.num_samples, 1)
 		mean = torch.zeros(self.cfg.horizon, self.cfg.action_dim, device=self.device)
@@ -238,6 +252,15 @@ class TDMPC2(torch.nn.Module):
 		}
 		return info
 
+	def _extra_model_loss(self, zs, action, task):
+		return zs.new_zeros(()), {}
+
+	def _after_model_update(self, zs, action, task):
+		return self.update_pi(zs.detach(), task)
+
+	def _update_target_q(self):
+		self.model.soft_update_target_Q()
+
 	@torch.no_grad()
 	def _td_target(self, next_z, reward, terminated, task):
 		"""
@@ -252,7 +275,7 @@ class TDMPC2(torch.nn.Module):
 		Returns:
 			torch.Tensor: TD-target.
 		"""
-		action, _ = self.model.pi(next_z, task)
+		action = self._bootstrap_action(next_z, task)
 		discount = self.discount[task].unsqueeze(-1) if self.cfg.multitask else self.discount
 		return reward + discount * (1-terminated) * self.model.Q(next_z, action, task, return_type='min', target=True)
 
@@ -296,13 +319,14 @@ class TDMPC2(torch.nn.Module):
 		else:
 			termination_loss = 0.
 		value_loss = value_loss / (self.cfg.horizon * self.cfg.num_q)
+		extra_loss, extra_info = self._extra_model_loss(_zs, action, task)
 		total_loss = (
 			self.cfg.consistency_coef * consistency_loss +
 			self.cfg.reward_coef * reward_loss +
 			self.cfg.termination_coef * termination_loss +
 			self.cfg.value_coef * value_loss
 		)
-
+		total_loss = total_loss + extra_loss
 		# Update model
 		total_loss.backward()
 		grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.grad_clip_norm)
@@ -310,10 +334,10 @@ class TDMPC2(torch.nn.Module):
 		self.optim.zero_grad(set_to_none=True)
 
 		# Update policy
-		pi_info = self.update_pi(zs.detach(), task)
+		pi_info = self._after_model_update(zs, action, task)
 
 		# Update target Q-functions
-		self.model.soft_update_target_Q()
+		self._update_target_q()
 
 		# Return training statistics
 		self.model.eval()
@@ -327,6 +351,7 @@ class TDMPC2(torch.nn.Module):
 		}
 		if self.cfg.episodic:
 			info.update(math.termination_statistics(torch.sigmoid(termination_pred[-1]), terminated[-1]))
+		info.update(extra_info)
 		info.update(pi_info)
 		return {k: v.detach().mean() if isinstance(v, torch.Tensor) else torch.tensor(v) \
 			for k, v in info.items()}

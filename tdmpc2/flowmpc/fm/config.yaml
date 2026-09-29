@@ -1,0 +1,14 @@
+defaults:
+  - /config
+  - /flowmpc/fm/policy
+  - _self_
+
+# FlowMPC/flow_match/train_fm.py training defaults.
+flow_training_steps: 512000
+flow_batch_size: 64
+flow_log_every: 512
+flow_save_every: 50000
+
+# New mt80 adaptation: retain this fraction of highest-return episodes per task.
+flow_quality_fraction: 0.10
+flow_max_episodes_per_task: null

@@ -1,0 +1,9 @@
+defaults:
+  - /config
+  - /flowmpc/fm/policy
+  - _self_
+
+flowmpc_train_mode: frozen
+tdmpc_checkpoint: null
+fm_checkpoint: null
+bc_coef: 1.0

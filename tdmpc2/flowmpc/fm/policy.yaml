@@ -1,0 +1,8 @@
+# Shared FM policy architecture for training and planner inference.
+flow_horizon: 8
+flow_inference_steps: 2
+flow_t_emb_dim: 64
+unet_down_dims: [64, 128]
+unet_kernel_size: 5
+unet_n_groups: 8
+flow_lr: 3e-4
