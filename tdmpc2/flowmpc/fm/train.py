@@ -47,15 +47,12 @@ def train(cfg):
 	set_seed(cfg.seed)
 
 	env = make_env(cfg)
-	try:
-		output_dir = Path(cfg.work_dir) / "flowmpc" / "fm"
-		output_dir.mkdir(parents=True, exist_ok=True)
-		OmegaConf.save(resolved_cfg, output_dir / "config.yaml", resolve=True)
-		metadata = select_episodes(cfg, output_dir / "fm_selection.pt")
-		buffer = load_selected_buffer(cfg, metadata)
-	finally:
-		if hasattr(env, "close"):
-			env.close()
+	output_dir = Path(cfg.work_dir) / "flowmpc" / "fm"
+	output_dir.mkdir(parents=True, exist_ok=True)
+	OmegaConf.save(resolved_cfg, output_dir / "config.yaml", resolve=True)
+	metadata = select_episodes(cfg, output_dir / "fm_selection.pt")
+	buffer = load_selected_buffer(cfg, metadata)
+	del env
 
 	policy = MultiTaskFlowMatchingPolicy(cfg).to("cuda:0")
 	scheduler = torch.optim.lr_scheduler.OneCycleLR(
