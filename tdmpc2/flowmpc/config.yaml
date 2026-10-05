@@ -1,6 +1,8 @@
+# @package _global_
+
 defaults:
-  - /config
-  - /flowmpc/fm/policy
+  - /config@_global_
+  - /flowmpc/fm/policy@_global_
   - _self_
 
 flowmpc_train_mode: frozen
