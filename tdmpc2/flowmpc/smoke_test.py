@@ -61,18 +61,24 @@ def _state_equal(left, right):
 
 
 def _assert_target_q_update(agent, should_update):
-	state = agent.model.state_dict()
-	targets = {key: value for key, value in state.items() if "_target_Qs_params" in key and torch.is_tensor(value)}
-	assert targets, "No target-Q tensors captured"
+	targets = agent.model._target_Qs_params
+	online = agent.model._detach_Qs_params
+	initial = {key: value.detach().clone() for key, value in targets.items(include_nested=True, leaves_only=True)}
+	online_before = {key: value.detach().clone() for key, value in online.items(include_nested=True, leaves_only=True)}
+	assert initial, "No target-Q tensors captured"
+	assert initial.keys() == online_before.keys(), "Target/online Q tensor keys differ"
 	# Make targets differ from online Q so a real soft update is observable.
 	with torch.no_grad():
-		for value in targets.values():
-			value.add_(1.)
-	before = _tensor_snapshot(targets)
+		for key in initial:
+			targets.get(key).add_(1.)
+	before = {key: targets.get(key).detach().clone() for key in initial}
+	assert all(torch.equal(before[key], value + 1.) for key, value in initial.items()), "Live target-Q mutation did not reach model"
+	assert any(not torch.equal(before[key], value) for key, value in initial.items()), "Live target-Q mutation had no effect"
+	assert all(torch.equal(online.get(key), value) for key, value in online_before.items()), "Target-Q mutation changed online Q"
 	agent._update_target_q()
-	after = agent.model.state_dict()
+	after = {key: targets.get(key).detach().clone() for key in before}
 	for key, value in before.items():
-		expected = value.lerp(state[key.replace("_target_Qs_params", "_detach_Qs_params")], agent.cfg.tau) if should_update else value
+		expected = value.lerp(online_before[key], agent.cfg.tau) if should_update else value
 		assert torch.allclose(after[key], expected) if should_update else torch.equal(after[key], expected)
 	if should_update:
 		assert any(not torch.equal(after[key], value) for key, value in before.items())
