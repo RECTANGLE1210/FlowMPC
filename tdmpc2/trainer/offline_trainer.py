@@ -64,6 +64,9 @@ class OfflineTrainer(Trainer):
 		if self.buffer.num_eps != expected_episodes:
 			print(f'WARNING: buffer has {self.buffer.num_eps} episodes, expected {expected_episodes} episodes for {self.cfg.task} task set.')
 
+	def _should_eval(self, i):
+		return i % self.cfg.eval_freq == 0
+
 	def train(self):
 		"""Train a TD-MPC2 agent."""
 		assert self.cfg.multitask and self.cfg.task in {'mt30', 'mt80'}, \
@@ -78,13 +81,13 @@ class OfflineTrainer(Trainer):
 			train_metrics = self.agent.update(self.buffer)
 
 			# Evaluate agent periodically
-			if i % self.cfg.eval_freq == 0 or i % 10_000 == 0:
+			if self._should_eval(i) or i % 10_000 == 0:
 				metrics = {
 					'iteration': i,
 					'elapsed_time': time() - self._start_time,
 				}
 				metrics.update(train_metrics)
-				if i % self.cfg.eval_freq == 0:
+				if self._should_eval(i):
 					metrics.update(self.eval())
 					self.logger.pprint_multitask(metrics, self.cfg)
 					if i > 0:

@@ -133,12 +133,38 @@ def select_episodes(cfg, metadata_path):
 	return metadata
 
 
-def load_selected_buffer(cfg, metadata):
+def load_selection_metadata(cfg, metadata_path):
+	"""Validate saved selection indices without rerunning FM quality selection."""
+	metadata = torch.load(metadata_path, map_location="cpu", weights_only=True)
+	if not isinstance(metadata, dict) or metadata.get("format_version") != _SELECTION_FORMAT_VERSION:
+		raise ValueError("Unsupported FM selection metadata format")
+	if metadata.get("tasks") != list(cfg.tasks) or metadata.get("num_tasks") != len(cfg.tasks):
+		raise ValueError("FM selection task ordering does not match cfg.tasks")
+	paths = _chunk_paths(cfg.data_dir)
+	if metadata.get("source_files") != [path.name for path in paths] or metadata.get("source_identity") != _source_identity(paths):
+		raise ValueError("FM selection source files do not match data_dir")
+	for key in ("episodes_per_task", "episode_length"):
+		if type(metadata.get(key)) is not int or metadata[key] < 1:
+			raise ValueError(f"FM selection {key} must be a positive integer")
+	files = metadata.get("files")
+	if not isinstance(files, dict) or not files:
+		raise ValueError("FM selection must contain episode indices")
+	for name, indices in files.items():
+		if name not in metadata["source_files"] or not torch.is_tensor(indices) or indices.dtype != torch.int64 or indices.ndim != 1:
+			raise ValueError("FM selection must contain chunk-relative int64 episode indices")
+		if not indices.numel() or (indices < 0).any() or indices.unique().numel() != indices.numel():
+			raise ValueError("FM selection episode indices must be nonempty, nonnegative and unique")
+	if sum(indices.numel() for indices in files.values()) != len(cfg.tasks) * metadata["episodes_per_task"]:
+		raise ValueError("FM selection episode count does not match episodes_per_task")
+	return metadata
+
+
+def load_selected_buffer(cfg, metadata, horizon=None, batch_size=None):
 	"""Load only the selected chunk-relative episode indices into TD-MPC2 Buffer."""
 	selected_episode_count = len(cfg.tasks) * metadata["episodes_per_task"]
 	buffer_cfg = deepcopy(cfg)
-	buffer_cfg.horizon = cfg.flow_horizon
-	buffer_cfg.batch_size = cfg.flow_batch_size
+	buffer_cfg.horizon = cfg.flow_horizon if horizon is None else horizon
+	buffer_cfg.batch_size = cfg.flow_batch_size if batch_size is None else batch_size
 	buffer_cfg.buffer_size = selected_episode_count * metadata["episode_length"]
 	buffer_cfg.steps = buffer_cfg.buffer_size
 	buffer = Buffer(buffer_cfg)

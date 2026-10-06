@@ -18,9 +18,10 @@ from common.logger import Logger
 from common.parser import parse_cfg
 from common.seed import set_seed
 from envs import make_env
-from trainer.offline_trainer import OfflineTrainer
 
 from .agent import FlowMPC
+from .fm.data import load_selected_buffer, load_selection_metadata
+from .trainer import FlowMPCOfflineTrainer
 
 
 torch.backends.cudnn.benchmark = True
@@ -62,11 +63,16 @@ def train(cfg):
 	env = make_env(cfg)
 	agent = FlowMPC(cfg)
 	agent.load_pretrained_tdmpc(cfg.tdmpc_checkpoint)
-	OfflineTrainer(
+	if cfg.flowmpc_train_mode == "frozen":
+		metadata = load_selection_metadata(cfg, Path(cfg.fm_checkpoint).with_name("fm_selection.pt"))
+		buffer = load_selected_buffer(cfg, metadata, horizon=cfg.horizon, batch_size=cfg.batch_size)
+	else:
+		buffer = Buffer(cfg)
+	FlowMPCOfflineTrainer(
 		cfg=cfg,
 		env=env,
 		agent=agent,
-		buffer=Buffer(cfg),
+		buffer=buffer,
 		logger=Logger(cfg),
 	).train()
 
