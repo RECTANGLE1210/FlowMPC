@@ -60,18 +60,15 @@ def train(cfg):
 	_validate_training_cfg(cfg)
 	set_seed(cfg.seed)
 	env = make_env(cfg)
-	try:
-		agent = FlowMPC(cfg)
-		agent.load_pretrained_tdmpc(cfg.tdmpc_checkpoint)
-		OfflineTrainer(
-			cfg=cfg,
-			env=env,
-			agent=agent,
-			buffer=Buffer(cfg),
-			logger=Logger(cfg),
-		).train()
-	finally:
-		env.close()
+	agent = FlowMPC(cfg)
+	agent.load_pretrained_tdmpc(cfg.tdmpc_checkpoint)
+	OfflineTrainer(
+		cfg=cfg,
+		env=env,
+		agent=agent,
+		buffer=Buffer(cfg),
+		logger=Logger(cfg),
+	).train()
 
 
 if __name__ == "__main__":

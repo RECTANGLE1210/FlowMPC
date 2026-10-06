@@ -64,22 +64,19 @@ def evaluate(cfg):
 	cfg.flowmpc_train_mode = "frozen"
 	set_seed(cfg.seed)
 	env = make_env(cfg)
-	try:
-		agent = FlowMPC(cfg)
-		agent.load(cfg.checkpoint)
-		agent.eval()
-		agent.requires_grad_(False)
-		results = OfflineTrainer(
-			cfg=cfg,
-			env=env,
-			agent=agent,
-			buffer=None,
-			logger=None,
-		).eval()
-		_print_mt80_summary(cfg, results)
-		return results
-	finally:
-		env.close()
+	agent = FlowMPC(cfg)
+	agent.load(cfg.checkpoint)
+	agent.eval()
+	agent.requires_grad_(False)
+	results = OfflineTrainer(
+		cfg=cfg,
+		env=env,
+		agent=agent,
+		buffer=None,
+		logger=None,
+	).eval()
+	_print_mt80_summary(cfg, results)
+	return results
 
 
 if __name__ == "__main__":
