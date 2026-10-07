@@ -13,14 +13,13 @@ import hydra
 import torch
 from hydra.utils import to_absolute_path
 
-from common.buffer import Buffer
 from common.logger import Logger
 from common.parser import parse_cfg
 from common.seed import set_seed
 from envs import make_env
 
 from .agent import FlowMPC
-from .fm.data import load_selected_buffer, load_selection_metadata
+from .replay import build_flowmpc_replay, validate_flowmpc_cfg
 from .trainer import FlowMPCOfflineTrainer
 
 
@@ -44,6 +43,11 @@ def _require_file(cfg, name):
 
 
 def _validate_training_cfg(cfg):
+	validate_flowmpc_cfg(cfg)
+	if cfg.model_size != 48:
+		raise ValueError("FlowMPC mt80 training requires model_size=48 for mt80-48M initialization")
+	if min(cfg.steps, cfg.batch_size, cfg.horizon, cfg.eval_freq, cfg.eval_episodes) < 1:
+		raise ValueError("Training steps, batch size, horizon and evaluation settings must be positive")
 	if not torch.cuda.is_available():
 		raise RuntimeError("FlowMPC training requires CUDA")
 	if cfg.task != "mt80" or cfg.obs != "state":
@@ -53,6 +57,10 @@ def _validate_training_cfg(cfg):
 		raise FileNotFoundError(f"data_dir must contain mt80 .pt chunks: {data_dir}")
 	_require_file(cfg, "tdmpc_checkpoint")
 	_require_file(cfg, "fm_checkpoint")
+	if cfg.flowmpc_train_mode == "frozen":
+		selection_path = Path(cfg.fm_checkpoint).with_name("fm_selection.pt")
+		if not selection_path.is_file():
+			raise FileNotFoundError(f"FM selection metadata does not exist: {selection_path}")
 
 
 @hydra.main(version_base=None, config_path="..", config_name="flowmpc/config")
@@ -63,11 +71,7 @@ def train(cfg):
 	env = make_env(cfg)
 	agent = FlowMPC(cfg)
 	agent.load_pretrained_tdmpc(cfg.tdmpc_checkpoint)
-	if cfg.flowmpc_train_mode == "frozen":
-		metadata = load_selection_metadata(cfg, Path(cfg.fm_checkpoint).with_name("fm_selection.pt"))
-		buffer = load_selected_buffer(cfg, metadata, horizon=cfg.horizon, batch_size=cfg.batch_size)
-	else:
-		buffer = Buffer(cfg)
+	buffer = build_flowmpc_replay(cfg)
 	FlowMPCOfflineTrainer(
 		cfg=cfg,
 		env=env,

@@ -19,10 +19,13 @@ class OfflineTrainer(Trainer):
 		super().__init__(*args, **kwargs)
 		self._start_time = time()
 	
+	def _eval_task_indices(self):
+		return range(len(self.cfg.tasks))
+
 	def eval(self):
 		"""Evaluate a TD-MPC2 agent."""
 		results = dict()
-		for task_idx in tqdm(range(len(self.cfg.tasks)), desc='Evaluating'):
+		for task_idx in tqdm(self._eval_task_indices(), desc='Evaluating'):
 			ep_rewards, ep_successes = [], []
 			for _ in range(self.cfg.eval_episodes):
 				obs, done, ep_reward, t = self.env.reset(task_idx), False, 0, 0
