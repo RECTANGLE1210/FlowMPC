@@ -70,15 +70,29 @@ class OfflineTrainer(Trainer):
 	def _should_eval(self, i):
 		return i % self.cfg.eval_freq == 0
 
+	def _initial_update_index(self):
+		return 0
+
+	def _after_update(self, completed_updates):
+		pass
+
+	def _save_eval_checkpoint(self, i):
+		if i > 0:
+			self.logger.save_agent(self.agent, identifier=f'{i}')
+
+	def _finalize(self):
+		self.logger.finish(self.agent)
+
 	def train(self):
 		"""Train a TD-MPC2 agent."""
 		assert self.cfg.multitask and self.cfg.task in {'mt30', 'mt80'}, \
 			'Offline training only supports multitask training with mt30 or mt80 task sets.'
 		self._load_dataset()
+		start = self._initial_update_index()
 		
 		print(f'Training agent for {self.cfg.steps} iterations...')
 		metrics = {}
-		for i in range(self.cfg.steps):
+		for i in range(start, self.cfg.steps):
 
 			# Update agent
 			train_metrics = self.agent.update(self.buffer)
@@ -93,8 +107,8 @@ class OfflineTrainer(Trainer):
 				if self._should_eval(i):
 					metrics.update(self.eval())
 					self.logger.pprint_multitask(metrics, self.cfg)
-					if i > 0:
-						self.logger.save_agent(self.agent, identifier=f'{i}')
+					self._save_eval_checkpoint(i)
 				self.logger.log(metrics, 'pretrain')
+			self._after_update(i + 1)
 			
-		self.logger.finish(self.agent)
+		self._finalize()

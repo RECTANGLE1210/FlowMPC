@@ -8,6 +8,8 @@ defaults:
 flowmpc_train_mode: frozen
 flowmpc_train_task_ids: null
 flowmpc_eval_task_ids: null
+flowmpc_save_freq: 10000
+flowmpc_resume_checkpoint: null
 tdmpc_checkpoint: null
 fm_checkpoint: null
 bc_coef: 1.0

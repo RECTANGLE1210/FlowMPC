@@ -38,7 +38,7 @@ class TrainerTests(unittest.TestCase):
 			trainer = self._trainer(cls)
 			calls = []
 			trainer.eval = lambda: calls.append(trainer.agent.update.call_count) or {}
-			with patch.object(OfflineTrainer, "_load_dataset"):
+			with patch.object(OfflineTrainer, "_load_dataset"), patch.object(FlowMPCOfflineTrainer, "_finalize"):
 				trainer.train()  # Mock updates only; no environment or model training.
 			self.assertEqual(calls, expected)
 			self.assertEqual(trainer.logger.log.call_count, 2)
